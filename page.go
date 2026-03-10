@@ -969,7 +969,7 @@ func (p Page) readContent(strm Value) Content {
 
 		case "TL": // set text leading
 			if len(args) != 1 {
-		        // Skip malformed Tf; continue interpreting rest of stream
+		        // Skip malformed TL; continue interpreting rest of stream
 		        return
 			}
 			g.Tl = args[0].Float64()

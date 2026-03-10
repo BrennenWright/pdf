@@ -505,7 +505,8 @@ func (p Page) GetPlainText(fonts map[string]*Font) (result string, err error) {
 			showText("\n")
 		case "Tf": // set text font and size
 			if len(args) != 2 {
-				panic("bad TL")
+		        // Skip malformed Tf; continue interpreting rest of stream
+		        return
 			}
 			if font, ok := fonts[args[0].Name()]; ok {
 				enc = font.Encoder()
@@ -712,7 +713,8 @@ func (p Page) walkTextBlocks(walker func(enc TextEncoding, x, y float64, s strin
 		case "T*": // move to start of next line
 		case "Tf": // set text font and size
 			if len(args) != 2 {
-				panic("bad TL")
+		        // Skip malformed Tf; continue interpreting rest of stream
+		        return
 			}
 
 			if font, ok := fonts[args[0].Name()]; ok {
@@ -911,7 +913,8 @@ func (p Page) readContent(strm Value) Content {
 
 		case "Tf": // set text font and size
 			if len(args) != 2 {
-				panic("bad TL")
+		        // Skip malformed Tf; continue interpreting rest of stream
+		        return
 			}
 			f := args[0].Name()
 			g.Tf = p.Font(f)
@@ -966,7 +969,8 @@ func (p Page) readContent(strm Value) Content {
 
 		case "TL": // set text leading
 			if len(args) != 1 {
-				panic("bad TL")
+		        // Skip malformed Tf; continue interpreting rest of stream
+		        return
 			}
 			g.Tl = args[0].Float64()
 

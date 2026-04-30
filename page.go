@@ -50,6 +50,8 @@ Search:
 				num--
 			}
 		}
+		// If Count overstates actual reachable kids, avoid looping forever.
+		break
 	}
 	return Page{}
 }

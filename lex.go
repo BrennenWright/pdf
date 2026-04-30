@@ -121,6 +121,13 @@ func (b *buffer) readOffset() int64 {
 	return b.offset - int64(len(b.buf)) + int64(b.pos)
 }
 
+// exhausted reports that the buffer reached EOF and has no bytes left.
+// readByte returns a synthetic '\n' after EOF, which can otherwise allow
+// malformed unterminated tokens to loop forever.
+func (b *buffer) exhausted() bool {
+	return b.eof && b.pos >= len(b.buf)
+}
+
 func (b *buffer) unreadByte() {
 	if b.pos > 0 {
 		b.pos--
@@ -193,26 +200,34 @@ func (b *buffer) readToken() token {
 func (b *buffer) readHexString() token {
 	tmp := b.tmp[:0]
 	for {
-	Loop:
+		if b.exhausted() {
+			break
+		}
 		c := b.readByte()
 		if c == '>' {
 			break
 		}
 		if isSpace(c) {
-			goto Loop
+			continue
 		}
-	Loop2:
-		c2 := b.readByte()
-		if isSpace(c2) {
-			goto Loop2
-		}
-		x := unhex(c)<<4 | unhex(c2)
-		if x < 0 {
-			fmt.Sprint(b.errorf("malformed hex string %c %c %s", c, c2, b.buf[b.pos:]))
+		for {
+			if b.exhausted() {
+				goto hexDone
+			}
+			c2 := b.readByte()
+			if isSpace(c2) {
+				continue
+			}
+			x := unhex(c)<<4 | unhex(c2)
+			if x < 0 {
+				fmt.Sprint(b.errorf("malformed hex string %c %c %s", c, c2, b.buf[b.pos:]))
+				goto hexDone
+			}
+			tmp = append(tmp, byte(x))
 			break
 		}
-		tmp = append(tmp, byte(x))
 	}
+hexDone:
 	b.tmp = tmp
 	return string(tmp)
 }
@@ -234,6 +249,9 @@ func (b *buffer) readLiteralString() token {
 	depth := 1
 Loop:
 	for {
+		if b.exhausted() {
+			break
+		}
 		c := b.readByte()
 		switch c {
 		default:
@@ -423,6 +441,9 @@ type objdef struct {
 
 func (b *buffer) readObject() (object, error) {
 	tok := b.readToken()
+	if tok == io.EOF {
+		return nil, errors.New("unexpected EOF parsing PDF object")
+	}
 	if kw, ok := tok.(keyword); ok {
 		switch kw {
 		case "null":
@@ -481,13 +502,13 @@ func (b *buffer) readArray() object {
 	var x array
 	for {
 		tok := b.readToken()
-		if tok == nil || tok == keyword("]") {
+		if tok == io.EOF || tok == nil || tok == keyword("]") {
 			break
 		}
 		b.unreadToken(tok)
 		res, err := b.readObject()
 		if err != nil {
-			return err
+			break
 		}
 		x = append(x, res)
 	}
@@ -498,7 +519,7 @@ func (b *buffer) readDict() object {
 	x := make(dict)
 	for {
 		tok := b.readToken()
-		if tok == nil || tok == keyword(">>") {
+		if tok == io.EOF || tok == nil || tok == keyword(">>") {
 			break
 		}
 		n, ok := tok.(name)

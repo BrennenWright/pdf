@@ -947,24 +947,18 @@ func (p Page) readContent(strm Value) Content {
 			showText(args[0].RawString())
 
 		case "TJ": // show text, allowing individual glyph positioning
-			if len(args) > 0 {	// bugfix: don't raise an exception
-				v := args[0]
-				for i := 0; i < v.Len(); i++ {
-					x := v.Index(i)
-					if x.Kind() == String {
-						if i == v.Len()-1 {
-							showText(x.RawString())
-							op = "BT"
-							continue
-						} else {
-							showText(x.RawString())
-						}
-					} else {
-						tx := -x.Float64() / 1000 * g.Tfs * g.Th
-						g.Tm = matrix{{1, 0, 0}, {0, 1, 0}, {tx, 0, 1}}.mul(g.Tm)
-					}
+			if len(args) != 1 {
+				break
+			}
+			v := args[0]
+			for i := 0; i < v.Len(); i++ {
+				x := v.Index(i)
+				if x.Kind() == String {
+					showText(x.RawString())
+				} else {
+					tx := -x.Float64() / 1000 * g.Tfs * g.Th
+					g.Tm = matrix{{1, 0, 0}, {0, 1, 0}, {tx, 0, 1}}.mul(g.Tm)
 				}
-				// showText("\n")
 			}
 
 		case "TL": // set text leading

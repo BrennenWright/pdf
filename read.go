@@ -864,7 +864,9 @@ func applyFilter(rd io.Reader, name string, param Value) io.Reader {
 	case "FlateDecode":
 		zr, err := zlib.NewReader(rd)
 		if err != nil {
-			panic(err)
+			// Malformed compressed stream: return empty content for this stream
+			// so other streams/pages can still be extracted.
+			return bytes.NewReader(nil)
 		}
 		pred := param.Key("Predictor")
 		if pred.Kind() == Null {

@@ -109,7 +109,9 @@ Reading:
 				val := stk.Pop()
 				key, ok := stk.Pop().data.(name)
 				if !ok {
-					panic("def of non-name")
+					// Some malformed cmap streams emit "def" with a non-name key.
+					// Skip the assignment and continue so text extraction can proceed.
+					continue
 				}
 				dicts[len(dicts)-1][key] = val.data
 				continue

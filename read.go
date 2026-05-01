@@ -873,12 +873,20 @@ func applyFilter(rd io.Reader, name string, param Value) io.Reader {
 			return zr
 		}
 		columns := param.Key("Columns").Int64()
+		if columns <= 0 {
+			return zr
+		}
 		switch pred.Int64() {
 		default:
 			fmt.Println("unknown predictor", pred)
 			panic("pred")
-		case 12:
-			return &pngUpReader{r: zr, hist: make([]byte, 1+columns), tmp: make([]byte, 1+columns)}
+		case 10, 11, 12, 13, 14, 15:
+			return &pngPredictorReader{
+				r:    zr,
+				tmp:  make([]byte, 1+columns),
+				prev: make([]byte, columns),
+				curr: make([]byte, columns),
+			}
 		}
 	case "ASCII85Decode":
 		cleanASCII85 := newAlphaReader(rd)
@@ -893,14 +901,15 @@ func applyFilter(rd io.Reader, name string, param Value) io.Reader {
 	}
 }
 
-type pngUpReader struct {
+type pngPredictorReader struct {
 	r    io.Reader
-	hist []byte
 	tmp  []byte
+	prev []byte
+	curr []byte
 	pend []byte
 }
 
-func (r *pngUpReader) Read(b []byte) (int, error) {
+func (r *pngPredictorReader) Read(b []byte) (int, error) {
 	n := 0
 	for len(b) > 0 {
 		if len(r.pend) > 0 {
@@ -914,15 +923,75 @@ func (r *pngUpReader) Read(b []byte) (int, error) {
 		if err != nil {
 			return n, err
 		}
-		if r.tmp[0] != 2 {
-			return n, fmt.Errorf("malformed PNG-Up encoding")
+
+		filter := r.tmp[0]
+		src := r.tmp[1:]
+		switch filter {
+		case 0: // None
+			copy(r.curr, src)
+		case 1: // Sub
+			for i := range src {
+				left := byte(0)
+				if i > 0 {
+					left = r.curr[i-1]
+				}
+				r.curr[i] = src[i] + left
+			}
+		case 2: // Up
+			for i := range src {
+				r.curr[i] = src[i] + r.prev[i]
+			}
+		case 3: // Average
+			for i := range src {
+				left := byte(0)
+				if i > 0 {
+					left = r.curr[i-1]
+				}
+				up := r.prev[i]
+				r.curr[i] = src[i] + byte((int(left)+int(up))/2)
+			}
+		case 4: // Paeth
+			for i := range src {
+				left := byte(0)
+				upLeft := byte(0)
+				if i > 0 {
+					left = r.curr[i-1]
+					upLeft = r.prev[i-1]
+				}
+				up := r.prev[i]
+				r.curr[i] = src[i] + paeth(left, up, upLeft)
+			}
+		default:
+			// Some malformed PDFs store unexpected filter bytes in predictor streams.
+			// Keep extraction moving by treating the row as unfiltered data.
+			copy(r.curr, src)
 		}
-		for i, b := range r.tmp {
-			r.hist[i] += b
-		}
-		r.pend = r.hist[1:]
+		copy(r.prev, r.curr)
+		r.pend = r.curr
 	}
 	return n, nil
+}
+
+func paeth(a, b, c byte) byte {
+	ai, bi, ci := int(a), int(b), int(c)
+	p := ai + bi - ci
+	pa := absInt(p - ai)
+	pb := absInt(p - bi)
+	pc := absInt(p - ci)
+	if pa <= pb && pa <= pc {
+		return a
+	}
+	if pb <= pc {
+		return b
+	}
+	return c
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 var passwordPad = []byte{

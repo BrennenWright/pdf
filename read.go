@@ -275,6 +275,61 @@ func readXrefStream(r *Reader, b *buffer) ([]xref, objptr, dict, error) {
 	return table, strmptr, strm.hdr, nil
 }
 
+// normalizeDecodeParmsColumns ensures PNG/TIFF predictor streams use /Columns equal to the
+// xref row width (sum of the /W widths). Many generators omit /Columns or set it wrong,
+// which makes pngPredictorReader read the wrong row size and hit io.EOF before the xref
+// table is fully consumed.
+func normalizeDecodeParmsColumns(dp object, rowBytes int64) object {
+	if dp == nil || rowBytes <= 0 {
+		return dp
+	}
+	switch x := dp.(type) {
+	case dict:
+		return normalizeOneDecodeParmsDict(x, rowBytes)
+	case array:
+		out := make(array, len(x))
+		for i, o := range x {
+			if d, ok := o.(dict); ok {
+				out[i] = normalizeOneDecodeParmsDict(d, rowBytes)
+			} else {
+				out[i] = o
+			}
+		}
+		return out
+	default:
+		return dp
+	}
+}
+
+func normalizeOneDecodeParmsDict(d dict, rowBytes int64) dict {
+	if d == nil || rowBytes <= 0 {
+		return d
+	}
+	out := make(dict)
+	for k, v := range d {
+		out[k] = v
+	}
+	pred, ok := out[name("Predictor")].(int64)
+	if !ok || pred < 10 || pred > 15 {
+		return out
+	}
+	out[name("Columns")] = rowBytes
+	return out
+}
+
+func streamReaderForXrefRows(r *Reader, strm stream, rowBytes int) io.ReadCloser {
+	if rowBytes <= 0 {
+		return Value{r, objptr{}, strm}.Reader()
+	}
+	hdr := make(dict)
+	for k, v := range strm.hdr {
+		hdr[k] = v
+	}
+	hdr[name("DecodeParms")] = normalizeDecodeParmsColumns(strm.hdr[name("DecodeParms")], int64(rowBytes))
+	fixed := stream{hdr: hdr, ptr: strm.ptr, offset: strm.offset}
+	return Value{r, objptr{}, fixed}.Reader()
+}
+
 func readXrefStreamData(r *Reader, strm stream, table []xref, size int64) ([]xref, error) {
 	index, _ := strm.hdr["Index"].(array)
 	if index == nil {
@@ -300,13 +355,13 @@ func readXrefStreamData(r *Reader, strm stream, table []xref, size int64) ([]xre
 		return nil, fmt.Errorf("invalid W array %v", objfmt(ww))
 	}
 
-	v := Value{r, objptr{}, strm}
 	wtotal := 0
 	for _, wid := range w {
 		wtotal += wid
 	}
 	buf := make([]byte, wtotal)
-	data := v.Reader()
+	data := streamReaderForXrefRows(r, strm, wtotal)
+	defer data.Close()
 	for len(index) > 0 {
 		start, ok1 := index[0].(int64)
 		n, ok2 := index[1].(int64)

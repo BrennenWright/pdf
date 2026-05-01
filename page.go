@@ -395,7 +395,7 @@ func readCmap(toUnicode Value) *cmap {
 			stk.Pop().Name() // key
 			stk.Push(value)
 		default:
-			println("interp\t", op)
+			// Ignore unrecognized cmap operators.
 		}
 	})
 	if !ok {
@@ -764,41 +764,28 @@ func (p Page) walkTextBlocks(walker func(enc TextEncoding, x, y float64, s strin
 //	this leads to an endless loop
 //
 func (p Page) Content() Content {
+	
 	var text []Text
 	var rect []Rect
-
+	
 	//fmt.Println("page=",p)
 	strm := p.V.Key("Contents")
 
 	if strm.Len() == 0 {
-		c, ok := p.readContentSafe(strm)
-		if ok {
-			text = c.Text
-			rect = c.Rect
-		}
+		c := p.readContent(strm)
+		text = c.Text
+		rect = c.Rect
 	} else {
 		for i := 0; i < strm.Len(); i++ {
 			strmindex := strm.Index(i)
 			//fmt.Println("stream ",i,"=",strmindex)
 
-			c, ok := p.readContentSafe(strmindex)
-			if !ok {
-				continue
-			}
+			c := p.readContent(strmindex)
 			text = append(text, c.Text...)
 			rect = append(rect, c.Rect...)
-		}
+		}	
 	}
 	return Content{text, rect}
-}
-
-func (p Page) readContentSafe(strm Value) (c Content, ok bool) {
-	defer func() {
-		if recover() != nil {
-			ok = false
-		}
-	}()
-	return p.readContent(strm), true
 }
 
 func (p Page) readContent(strm Value) Content {

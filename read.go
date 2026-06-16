@@ -1228,14 +1228,29 @@ func cryptKey(key []byte, useAES bool, ptr objptr) []byte {
 func decryptString(key []byte, useAES bool, ptr objptr, x string) string {
 	key = cryptKey(key, useAES, ptr)
 	if useAES {
-		panic("AES not implemented")
-	} else {
-		c, _ := rc4.NewCipher(key)
+		// PDF 32000-1:2008 §7.6.5: AES-encrypted strings have the same layout
+		// as AES-encrypted streams — a 16-byte IV prepended to the AES-CBC
+		// ciphertext, followed by PKCS#7 padding.
 		data := []byte(x)
-		c.XORKeyStream(data, data)
-		x = string(data)
+		if len(data) < 32 || len(data[16:])%16 != 0 {
+			return x // malformed ciphertext; return raw rather than panic
+		}
+		cb, err := aes.NewCipher(key)
+		if err != nil {
+			return x
+		}
+		plain := make([]byte, len(data)-16)
+		cipher.NewCBCDecrypter(cb, data[:16]).CryptBlocks(plain, data[16:])
+		// Strip PKCS#7 padding.
+		if pad := int(plain[len(plain)-1]); pad > 0 && pad <= 16 && pad <= len(plain) {
+			plain = plain[:len(plain)-pad]
+		}
+		return string(plain)
 	}
-	return x
+	c, _ := rc4.NewCipher(key)
+	data := []byte(x)
+	c.XORKeyStream(data, data)
+	return string(data)
 }
 
 func decryptStream(key []byte, useAES bool, ptr objptr, rd io.Reader) io.Reader {

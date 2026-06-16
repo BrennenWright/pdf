@@ -2,12 +2,14 @@ package pdf
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
-	"path/filepath"
 )
 
 var referenceFirstPage = `TEST FILE 
@@ -52,6 +54,38 @@ func TestPDF20HeaderAccepted(t *testing.T) {
 	// the file is intentionally not a complete PDF.
 	if err != nil && bytes.Contains([]byte(err.Error()), []byte("invalid header")) {
 		t.Errorf("NewReader rejected %%PDF-2.0 header: %v", err)
+	}
+}
+
+// TestAESStringDecryption verifies that decryptString no longer panics when
+// useAES is true. Previously it contained an unimplemented stub:
+//
+//	panic("AES not implemented")
+//
+// PDF 32000-1:2008 §7.6.5 specifies AES-encrypted strings have the same
+// layout as streams: a 16-byte IV followed by AES-CBC ciphertext with PKCS#7
+// padding. V=4 R=4 PDFs (AESV2, /StrF /StdCF) encrypt all string tokens via
+// this path; the panic surfaced on the first string encountered during parsing.
+func TestAESStringDecryption(t *testing.T) {
+	// Construct a known AES-128-CBC ciphertext for the string "hello" and
+	// verify decryptString round-trips it correctly.
+	import_key := make([]byte, 16) // all-zero file key for test
+	ptr := objptr{id: 1, gen: 0}
+
+	// Encrypt "hello" + PKCS#7 padding (11 bytes pad to reach 16) with a
+	// known IV so we can assert the plaintext coming back.
+	iv := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+	plaintext := []byte("hello\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b") // 16 bytes with PKCS#7
+
+	perObjKey := cryptKey(import_key, true, ptr)
+	cb, _ := aes.NewCipher(perObjKey)
+	ciphertext := make([]byte, 16)
+	cipher.NewCBCEncrypter(cb, iv).CryptBlocks(ciphertext, plaintext)
+
+	input := string(append(iv, ciphertext...))
+	got := decryptString(import_key, true, ptr, input)
+	if got != "hello" {
+		t.Errorf("decryptString AES: got %q, want %q", got, "hello")
 	}
 }
 

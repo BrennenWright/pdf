@@ -27,6 +27,40 @@ erat, sed diam voluptua. At vero eos et accusam et
 TEST 
 SUBTITLE`
 
+// TestCryptKeyTruncation verifies that cryptKey truncates its output to
+// min(len(fileKey)+5, 16) bytes as required by PDF 32000-1:2008 §7.6.3.3 step 4.
+//
+// Previously cryptKey returned the full 16-byte MD5 digest regardless of the
+// file key length. For 40-bit RC4 encryption (5-byte file key) the correct
+// per-object key is 10 bytes; using 16 bytes produces a completely wrong
+// RC4 keystream, causing all object stream decryptions to fail silently with
+// garbage output and manifesting as "cannot find object in stream" panics.
+//
+// The bug went undetected because 128-bit RC4 files happen to need all 16
+// bytes (min(21, 16) = 16), so only sub-128-bit encrypted PDFs were affected.
+func TestCryptKeyTruncation(t *testing.T) {
+	ptr := objptr{id: 7874, gen: 0}
+
+	cases := []struct {
+		fileKeyLen  int
+		wantKeyLen  int
+	}{
+		{5, 10},  // RC4-40:  min(5+5, 16) = 10
+		{7, 12},  // RC4-56:  min(7+5, 16) = 12
+		{10, 15}, // RC4-80:  min(10+5, 16) = 15
+		{11, 16}, // RC4-88:  min(11+5, 16) = 16 (capped)
+		{16, 16}, // RC4-128: min(16+5, 16) = 16 (capped)
+	}
+
+	for _, tc := range cases {
+		key := make([]byte, tc.fileKeyLen)
+		got := cryptKey(key, false, ptr)
+		if len(got) != tc.wantKeyLen {
+			t.Errorf("cryptKey(%d-byte key): got %d bytes, want %d", tc.fileKeyLen, len(got), tc.wantKeyLen)
+		}
+	}
+}
+
 //
 // this pdf has an object within stream which is handled different!
 // the original implementation calculated the stream but didn't returned the object at resolve

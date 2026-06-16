@@ -1210,7 +1210,15 @@ func cryptKey(key []byte, useAES bool, ptr objptr) []byte {
 	if useAES {
 		h.Write([]byte("sAlT"))
 	}
-	return h.Sum(nil)
+	// PDF 32000-1:2008 §7.6.3.3 step 4: use the first min(n/8+5, 16) bytes.
+	// For RC4-40 (n=40) that is 10; for RC4-128 (n=128) it is 16. Without this
+	// truncation the library uses all 16 MD5 bytes regardless of the file key
+	// length, which decrypts every stream incorrectly for sub-128-bit key sizes.
+	n := len(key) + 5
+	if n > 16 {
+		n = 16
+	}
+	return h.Sum(nil)[:n]
 }
 
 func decryptString(key []byte, useAES bool, ptr objptr, x string) string {

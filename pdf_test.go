@@ -38,6 +38,23 @@ SUBTITLE`
 //
 // The bug went undetected because 128-bit RC4 files happen to need all 16
 // bytes (min(21, 16) = 16), so only sub-128-bit encrypted PDFs were affected.
+// TestPDF20HeaderAccepted verifies that NewReaderEncrypted accepts a %PDF-2.0 header.
+// The previous check (HasPrefix("%PDF-1.")) rejected all PDF 2.0+ files with
+// "not a PDF file: invalid header" despite them being structurally valid.
+func TestPDF20HeaderAccepted(t *testing.T) {
+	// Build a minimal byte slice with a %PDF-2.0 header, a well-formed %%EOF,
+	// and a startxref. We only need the header check to pass; the reader will
+	// fail later when it cannot find a valid xref, but that is a different error.
+	src := []byte("%PDF-2.0\n%%EOF\n")
+	r := bytes.NewReader(src)
+	_, err := NewReader(r, int64(len(src)))
+	// Any error other than the old "invalid header" rejection is acceptable —
+	// the file is intentionally not a complete PDF.
+	if err != nil && bytes.Contains([]byte(err.Error()), []byte("invalid header")) {
+		t.Errorf("NewReader rejected %%PDF-2.0 header: %v", err)
+	}
+}
+
 func TestCryptKeyTruncation(t *testing.T) {
 	ptr := objptr{id: 7874, gen: 0}
 

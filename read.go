@@ -138,7 +138,11 @@ func NewReaderEncrypted(f io.ReaderAt, size int64, pw func() string) (*Reader, e
 	if i := bytes.IndexByte(buf, '\n'); i >= 0 {
 		buf = buf[:i]
 	}
-	if !bytes.HasPrefix(buf, []byte("%PDF-1.")) || buf[7] < '0' || buf[7] > '7' {
+	// Accept any %PDF-M.m version header. The PDF content stream format and
+	// cross-reference structure have remained stable across all published
+	// versions (1.0–1.7, 2.0), so restricting to %PDF-1.x incorrectly rejects
+	// structurally valid PDF 2.0 and any future revision files.
+	if !bytes.HasPrefix(buf, []byte("%PDF-")) {
 		return nil, fmt.Errorf("not a PDF file: invalid header")
 	}
 	end := size

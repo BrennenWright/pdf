@@ -7,6 +7,7 @@ package pdf
 import (
 	"fmt"
 	"io"
+	"strings"
 )
 
 // A Stack represents a stack of values.
@@ -52,7 +53,37 @@ func newDict() Value {
 // There is no support for executable blocks, among other limitations.
 //
 func Interpret(strm Value, do func(stk *Stack, op string)) {
-	rd := strm.Reader()
+	interpretReader(strm.Reader(), do)
+}
+
+// contentStreamReader returns the data of a page's Contents entry, which may be a single
+// stream or an array of streams. An array must be read as one stream (PDF 32000-1 §7.8.2):
+// producers such as Word split it mid-object, so the font, text state and pending operands
+// carry across each boundary. A read error ends only the stream that failed.
+func contentStreamReader(contents Value) io.Reader {
+	if contents.Kind() != Array {
+		return contents.Reader()
+	}
+	parts := make([]io.Reader, 0, 2*contents.Len())
+	for i := 0; i < contents.Len(); i++ {
+		parts = append(parts, eofOnErrorReader{contents.Index(i).Reader()}, strings.NewReader("\n"))
+	}
+	return io.MultiReader(parts...)
+}
+
+type eofOnErrorReader struct {
+	rd io.Reader
+}
+
+func (r eofOnErrorReader) Read(p []byte) (int, error) {
+	n, err := r.rd.Read(p)
+	if err != nil && err != io.EOF {
+		err = io.EOF
+	}
+	return n, err
+}
+
+func interpretReader(rd io.Reader, do func(stk *Stack, op string)) {
 	b := newBuffer(rd, 0)
 	b.allowEOF = true
 	b.allowObjptr = false

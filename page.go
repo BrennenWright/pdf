@@ -493,7 +493,7 @@ func (p Page) GetPlainText(fonts map[string]*Font) (result string, err error) {
 		}
 	}
 
-	Interpret(strm, func(stk *Stack, op string) {
+	interpretReader(contentStreamReader(strm), func(stk *Stack, op string) {
 		n := stk.Len()
 		args := make([]Value, n)
 		for i := n - 1; i >= 0; i-- {
@@ -698,7 +698,7 @@ func (p Page) walkTextBlocks(walker func(enc TextEncoding, x, y float64, s strin
 
 	var enc TextEncoding = &nopEncoder{}
 	var currentX, currentY float64
-	Interpret(strm, func(stk *Stack, op string) {
+	interpretReader(contentStreamReader(strm), func(stk *Stack, op string) {
 		n := stk.Len()
 		args := make([]Value, n)
 		for i := n - 1; i >= 0; i-- {
@@ -764,31 +764,10 @@ func (p Page) walkTextBlocks(walker func(enc TextEncoding, x, y float64, s strin
 //	this leads to an endless loop
 //
 func (p Page) Content() Content {
-	
-	var text []Text
-	var rect []Rect
-	
-	//fmt.Println("page=",p)
-	strm := p.V.Key("Contents")
-
-	if strm.Len() == 0 {
-		c := p.readContent(strm)
-		text = c.Text
-		rect = c.Rect
-	} else {
-		for i := 0; i < strm.Len(); i++ {
-			strmindex := strm.Index(i)
-			//fmt.Println("stream ",i,"=",strmindex)
-
-			c := p.readContent(strmindex)
-			text = append(text, c.Text...)
-			rect = append(rect, c.Rect...)
-		}	
-	}
-	return Content{text, rect}
+	return p.readContent(contentStreamReader(p.V.Key("Contents")))
 }
 
-func (p Page) readContent(strm Value) Content {
+func (p Page) readContent(strm io.Reader) Content {
 	var enc TextEncoding = &nopEncoder{}
 
 	var g = gstate{
@@ -823,7 +802,7 @@ func (p Page) readContent(strm Value) Content {
 
 	var rect []Rect
 	var gstack []gstate
-	Interpret(strm, func(stk *Stack, op string) {
+	interpretReader(strm, func(stk *Stack, op string) {
 		n := stk.Len()
 		args := make([]Value, n)
 		for i := n - 1; i >= 0; i-- {
@@ -879,6 +858,10 @@ func (p Page) readContent(strm Value) Content {
 			if n >= 0 {	// bugfix: don't raise an exception
 				g = gstack[n]
 				gstack = gstack[:n]
+				enc = g.Tf.enc
+				if enc == nil {
+					enc = &nopEncoder{}
+				}
 			}
 		case "BT": // begin text (reset text matrix and line matrix)
 			g.Tm = ident
@@ -924,6 +907,7 @@ func (p Page) readContent(strm Value) Content {
 			if enc == nil {
 				enc = &nopEncoder{}
 			}
+			g.Tf.enc = enc
 			g.Tfs = args[1].Float64()
 
 		case "\"": // set spacing, move to next line, and show text

@@ -74,6 +74,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"sync"
 )
 
 // A Reader is a single PDF file open for reading.
@@ -85,6 +86,15 @@ type Reader struct {
 	trailerptr objptr
 	key        []byte
 	useAES     bool
+
+	objStmMu    sync.Mutex
+	objStmCache map[objptr]*objStm
+}
+
+// objStm is a decoded object stream: its data and the offset of each object in it.
+type objStm struct {
+	data    []byte
+	offsets map[uint32]int64
 }
 
 type xref struct {
@@ -826,25 +836,19 @@ func (r *Reader) resolve(parent objptr, x interface{}) Value {
 				if strm.Key("Type").Name() != "ObjStm" {
 					panic("not an object stream")
 				}
-				n := int(strm.Key("N").Int64())
-				first := strm.Key("First").Int64()
-				if first == 0 {
-					panic("missing First")
-				}
-				b := newBuffer(strm.Reader(), 0)
-				b.allowEOF = true
-				for i := 0; i < n; i++ {
-					id, _ := b.readToken().(int64)
-					off, _ := b.readToken().(int64)
-					if uint32(id) == ptr.id {
-						b.seekForward(first + off)
-						objinstream, err := b.readObject()
-						if err != nil {
-							return Value{}
-						}
-						x = objinstream
-						break Search
+				stm := r.decodeObjStm(strm)
+				if off, ok := stm.offsets[ptr.id]; ok {
+					if off < 0 || off > int64(len(stm.data)) {
+						return Value{}
 					}
+					b := newBuffer(bytes.NewReader(stm.data[off:]), 0)
+					b.allowEOF = true
+					objinstream, err := b.readObject()
+					if err != nil {
+						return Value{}
+					}
+					x = objinstream
+					break Search
 				}
 				ext := strm.Key("Extends")
 				if ext.Kind() != Stream {
@@ -883,6 +887,50 @@ func (r *Reader) resolve(parent objptr, x interface{}) Value {
 		fmt.Sprintf("unexpected value type %T in resolve", x)
 		return Value{}
 	}
+}
+
+// decodeObjStm returns the decoded object stream strm, decoding it only once per Reader.
+// Fonts and their Widths are resolved per glyph, so re-decoding the stream on every
+// lookup made pages with fonts in object streams very slow.
+func (r *Reader) decodeObjStm(strm Value) *objStm {
+	r.objStmMu.Lock()
+	cached, ok := r.objStmCache[strm.ptr]
+	r.objStmMu.Unlock()
+	if ok {
+		return cached
+	}
+
+	n := int(strm.Key("N").Int64())
+	first := strm.Key("First").Int64()
+	if first == 0 {
+		panic("missing First")
+	}
+	rd := strm.Reader()
+	data, _ := io.ReadAll(rd)
+	rd.Close()
+
+	stm := &objStm{data: data, offsets: make(map[uint32]int64)}
+	b := newBuffer(bytes.NewReader(data), 0)
+	b.allowEOF = true
+	for i := 0; i < n; i++ {
+		tok := b.readToken()
+		if tok == io.EOF {
+			break
+		}
+		id, _ := tok.(int64)
+		off, _ := b.readToken().(int64)
+		if _, dup := stm.offsets[uint32(id)]; !dup {
+			stm.offsets[uint32(id)] = first + off
+		}
+	}
+
+	r.objStmMu.Lock()
+	if r.objStmCache == nil {
+		r.objStmCache = make(map[objptr]*objStm)
+	}
+	r.objStmCache[strm.ptr] = stm
+	r.objStmMu.Unlock()
+	return stm
 }
 
 type errorReadCloser struct {

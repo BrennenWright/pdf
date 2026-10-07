@@ -105,16 +105,15 @@ func (b *buffer) reload() (bool, error) {
 
 func (b *buffer) seekForward(offset int64) (err error) {
 	for b.offset < offset {
+		// A reader may return its final bytes together with io.EOF; those bytes are
+		// still buffered, so only stop when a reload returns no data.
 		rel, err := b.reload()
-		if err != nil {
-			return err
-		}
 		if !rel {
 			return err
 		}
 	}
 	b.pos = len(b.buf) - int(b.offset-offset)
-	return err
+	return nil
 }
 
 func (b *buffer) readOffset() int64 {
